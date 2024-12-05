@@ -97,6 +97,10 @@ Resources:
                   - cloudformation:DeleteStack
                   - cloudformation:DescribeStacks
                 Resource: "*"
+              - Effect: Allow
+                Action:
+                  - codestar-connections:UseConnection
+                Resource: !Ref CodeStarConnection
 
   CodeBuildRole:
     Type: AWS::IAM::Role
