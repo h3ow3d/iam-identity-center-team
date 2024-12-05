@@ -1,0 +1,185 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: GitSync Deployment File for a Self-Managing CloudFormation Pipeline
+
+Parameters:
+  GitHubRepoName:
+    Type: String
+    Description: "The name of the GitHub repository (format: owner/repo-name)."
+  GitHubBranch:
+    Type: String
+    Default: main
+    Description: The branch of the GitHub repository to sync.
+  CodeStarConnection:
+    Type: String
+    Default: "arn:aws:codeconnections:eu-west-2:575108940418:connection/7b810aeb-23af-4a88-9a51-b39d72cc1064"
+
+Resources:
+  # S3 Bucket for Pipeline Artifacts
+  PipelineArtifactBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      VersioningConfiguration:
+        Status: Enabled
+
+  # Repository Link Resource
+  RepositoryLink:
+    Type: AWS::CodeStarConnections::RepositoryLink
+    Properties:
+      ConnectionArn: !Ref CodeStarConnection
+      OwnerId: !Select [0, !Split ["/", !Ref GitHubRepoName]]
+      RepositoryName: !Select [1, !Split ["/", !Ref GitHubRepoName]]
+
+  # Sync Configuration for GitSync
+  RepositorySyncConfig:
+    Type: AWS::CodeStarConnections::SyncConfiguration
+    Properties:
+      Branch: !Ref GitHubBranch
+      ConfigFile: !Sub infrastructure/sandbox/gitsync-deployment-file.yaml
+      PublishDeploymentStatus: ENABLED
+      RepositoryLinkId: !GetAtt RepositoryLink.RepositoryLinkId
+      ResourceName: !Ref AWS::StackName
+      RoleArn: !GetAtt GitSyncRole.Arn
+      SyncType: CFN_STACK_SYNC
+      TriggerResourceUpdateOn: FILE_CHANGE
+
+  GitSyncRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - cloudformation.sync.codeconnections.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: SyncConfigurationPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudformation:*
+                  - codestar-connections:UseConnection
+                  - events:*
+                Resource: "*"
+
+
+  # IAM Role for CodePipeline
+  CodePipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CodePipelinePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt PipelineArtifactBucket.Arn
+                  - !Sub "${PipelineArtifactBucket.Arn}/*"
+              - Effect: Allow
+                Action:
+                  - cloudformation:CreateStack
+                  - cloudformation:UpdateStack
+                  - cloudformation:DeleteStack
+                  - cloudformation:DescribeStacks
+                Resource: "*"
+
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CodeBuildPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - codebuild:*
+                  - s3:*
+                Resource: "*"
+
+  # CodePipeline
+  CodePipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      RoleArn: !GetAtt CodePipelineRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref PipelineArtifactBucket
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: GitHubSource
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: CodeStarSourceConnection
+                Version: 1
+              OutputArtifacts:
+                - Name: SourceArtifact
+              Configuration:
+                ConnectionArn: !Ref CodeStarConnection
+                FullRepositoryId: !Ref GitHubRepoName
+                BranchName: !Ref GitHubBranch
+              RunOrder: 1
+        - Name: Build
+          Actions:
+            - Name: PrintHelloWorld
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: 1
+              InputArtifacts:
+                - Name: SourceArtifact
+              Configuration:
+                ProjectName: !Ref HelloWorldBuildProject
+              RunOrder: 1
+
+  HelloWorldBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: HelloWorldBuildProject
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:6.0
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: |
+          version: 0.2
+          phases:
+            build:
+              commands:
+                - echo "Hello, World!"
+          artifacts:
+            files:
+              - '**/*'
+      Description: Build project to print Hello, World
+      TimeoutInMinutes: 5
+

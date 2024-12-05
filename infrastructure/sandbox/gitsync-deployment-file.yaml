@@ -1,0 +1,5 @@
+template-file-path: infrastructure/bootstrap-pipeline.yaml
+parameters:
+  GitHubRepoName: h3ow3d/iam-identity-center-team
+  GitHubBranch: main
+tags: {}
