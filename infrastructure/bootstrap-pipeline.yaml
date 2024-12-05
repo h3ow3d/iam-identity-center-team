@@ -34,7 +34,7 @@ Resources:
     Type: AWS::CodeStarConnections::SyncConfiguration
     Properties:
       Branch: !Ref GitHubBranch
-      ConfigFile: !Sub infrastructure/sandbox/gitsync-deployment-file.yaml
+      ConfigFile: "infrastructure/sandbox/gitsync-deployment-file.yaml"
       PublishDeploymentStatus: ENABLED
       RepositoryLinkId: !GetAtt RepositoryLink.RepositoryLinkId
       ResourceName: !Ref AWS::StackName
